@@ -3,6 +3,7 @@ const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
+const pino = require('pino');
 
 // Store conversation state for each user
 const conversationState = new Map();
@@ -12,10 +13,16 @@ const OWNER_NUMBER = process.env.OWNER_NUMBER || 'YOUR_NUMBER@s.whatsapp.net'; /
 async function startSock() {
     const authDir = process.env.AUTH_DIR || './auth_info'; // Use env var for Render or default locally
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
+
+    // Initialize WhatsApp socket with custom settings
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
         browser: ['Josephine', 'Chrome', '1.0'],
+        syncFullHistory: false,            // Skip full history sync to reduce load
+        defaultQueryTimeoutMs: 60000,      // Increase timeout to 60 seconds
+        shouldSyncHistoryMessage: () => false, // Disable history message sync
+        logger: pino({ level: 'debug' }),  // Detailed logging for debugging
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -29,7 +36,10 @@ async function startSock() {
         if (connection === 'close') {
             const shouldReconnect = new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('❌ Connection closed:', lastDisconnect?.error, 'Reconnecting:', shouldReconnect);
-            if (shouldReconnect) startSock();
+            if (shouldReconnect) {
+                // Reconnect with a 5-second delay to avoid rate limits
+                setTimeout(() => startSock(), 5000);
+            }
         } else if (connection === 'open') {
             console.log('✅ Josephine is online! 🚀');
         }
@@ -443,4 +453,7 @@ async function startSock() {
     });
 }
 
-startSock();
+// Start the bot and catch errors
+startSock().catch((err) => {
+    console.error('Failed to start Josephine:', err);
+});
